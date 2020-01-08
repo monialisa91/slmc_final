@@ -41,4 +41,38 @@ struct NetImpl : torch::nn::Module {
 TORCH_MODULE(Net); // creates module holder for NetImpl
 
 
+void trainNetwork(Net model, int epochs, int batchSize, const string filename_x, const string filename_y, torch::DeviceType device_type, bool save_mode=false) {
+    auto data_set = MyDataset(filename_x, filename_y, true, false).map(torch::data::transforms::Stack<>());
+    auto data_loader = torch::data::make_data_loader<torch::data::samplers::SequentialSampler>(
+            std::move(data_set), batchSize);
+
+    cout << "training data loaded" << endl;
+
+    torch::optim::Adam optimizer(model->parameters(), torch::optim::AdamOptions(1e-3));
+    model->train();
+
+    size_t batch_idx = 0;
+    float value_loss;
+    for (int i = 0; i < epochs; i++) {
+        cout << i << endl;
+        for (auto &batch : *data_loader) {
+            auto data = batch.data.to(device_type), targets = batch.target.to(device_type);
+            optimizer.zero_grad();
+            auto output = model->forward(data);
+            auto loss = torch::mse_loss(output.squeeze(), targets);
+            value_loss = loss.template item<float>();
+            AT_ASSERT(!std::isnan(loss.template item<float>()));
+            loss.backward();
+            optimizer.step();
+        }
+
+
+        printf("\rTrain Epoch: %d Loss: %.4f",
+               i, value_loss);
+    }
+    if(save_mode) torch::save(model, "modelCNN.pt");
+
+}
+
+
 #endif //SLMC_FINAL_NEURALNETWORK_H

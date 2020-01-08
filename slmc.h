@@ -26,7 +26,6 @@ mat Swap_sites(mat lattice) {
 
     } while(lattice(lattice_n2, lattice_n2) > 0.1);
 
-
     swap_var = lattice(lattice_n1, lattice_n1);
     lattice(lattice_n1, lattice_n1) = lattice(lattice_n2, lattice_n2);
     lattice(lattice_n2, lattice_n2) = swap_var;
@@ -122,21 +121,21 @@ rowvec HamToConf(mat hamiltonian, double U) {
 
 }
 
-mat LastHam (mat data, double U, int t, int L) {
+mat HamConf (mat data, double U, int t, int L, int conf_nr) {
 
     int D = data.n_rows;
-    rowvec LastConf = data.row(D-1);
+    rowvec LastConf = data.row(conf_nr);
     mat rslt = confToHam(LastConf, U, t, L);
 
     return rslt;
 }
 
-double energySLMC (mat hamiltonian, double U,  NetImpl modelCNN, torch::DeviceType device_type, bool transform) {
+double energySLMC (mat hamiltonian, double U,  Net modelCNN, torch::DeviceType device_type, bool transform) {
     rowvec conf = HamToConf(hamiltonian, U);
     torch::Tensor conf2 = RowVecToTensor(conf);
     conf2 = conf2.reshape({1, 1, 10, 10});
     conf2 = conf2.to(device_type);
-    auto output2 = modelCNN.forward(conf2);
+    auto output2 = modelCNN->forward(conf2);
     float rslt = output2.template item<float>();
     if(transform == true)
         rslt = -exp(rslt);
@@ -144,7 +143,7 @@ double energySLMC (mat hamiltonian, double U,  NetImpl modelCNN, torch::DeviceTy
 
 }
 
-mat SLMC_effective (mat initial_hamiltonian, double U, double beta, int MC_steps, NetImpl modelCNN, torch::DeviceType device_type, bool transform) {
+mat SLMC_effective (mat initial_hamiltonian, double U, double beta, int MC_steps, Net modelCNN, torch::DeviceType device_type, bool transform) {
     double cp = U/2.0;
     double E0 = energySLMC(initial_hamiltonian, U,  modelCNN, device_type, transform);
     double E0real = energy_conf(initial_hamiltonian, beta, cp);
@@ -174,34 +173,38 @@ mat SLMC_effective (mat initial_hamiltonian, double U, double beta, int MC_steps
         }
     }
     double Enewreal = energy_conf(initial_hamiltonian, beta, U/2.0);
-//    cout << "\n Energy end " << E0  << "Enew_real " << Enewreal << endl;
+//    cout << "\n Energy end " << E0  << " Enew_real " << Enewreal << endl;
 //    cout << "\n accepted:" << (double) acc/MC_steps <<endl;
-//    cout << "\n accepted_en:" << (double) acc_en/MC_steps <<endl;
 
 
     return initial_hamiltonian;
 }
 
-mat SLMC(mat initial_hamiltonian, double U, double beta, double cp, int n_conf, int MC_steps, NetImpl modelCNN, torch::DeviceType device_type, bool transform) {
+mat SLMC(mat initial_hamiltonian, double U, double beta, double cp, int n_conf, int MC_steps, Net modelCNN, torch::DeviceType device_type, bool transform, const string X_add, const string y_add) {
+    int N = initial_hamiltonian.n_rows;
     double EA = energy_conf(initial_hamiltonian, beta, cp);
     double EA_eff = energySLMC(initial_hamiltonian, U,  modelCNN, device_type, transform);
     double EB, EB_eff, delta, r;
     mat new_hamiltonian;
-    int acc =0;
-    cout << "\nEA " << EA << endl;
+    mat configurations_add(n_conf, N);
+    vec labels_add(n_conf);
+    int acc = 0;
+//    cout << "\nEA " << EA << endl;
     cout << "EAeff " << EA_eff << endl;
 
     for(int i=0; i<n_conf; i++) {
         new_hamiltonian = SLMC_effective(initial_hamiltonian, U, beta, MC_steps, modelCNN, device_type, transform);
         EB = energy_conf(new_hamiltonian, beta, cp);
         EB_eff = energySLMC(new_hamiltonian, U,  modelCNN, device_type, transform);
-        cout << "EB " << EB << " " <<"EBeff " << EB_eff << endl;
+//        cout << "EB " << EB << " " <<"EBeff " << EB_eff << endl;
 
         delta = EB - EA  + EA_eff - EB_eff;
         if(delta < 0) {
             initial_hamiltonian = new_hamiltonian;
             EA = EB;
             EA_eff = EB_eff;
+            labels_add(acc) = EB;
+            configurations_add.row(acc) = HamToConf(initial_hamiltonian, U);
             acc++;
         }
         else {
@@ -210,12 +213,28 @@ mat SLMC(mat initial_hamiltonian, double U, double beta, double cp, int n_conf, 
                 initial_hamiltonian = new_hamiltonian;
                 EA = EB;
                 EA_eff = EB_eff;
+                labels_add(acc) = EB;
+                configurations_add.row(acc) = HamToConf(initial_hamiltonian, U);
                 acc++;
             }
         }
     }
-    cout << "accepted all " << acc << endl;
+    cout << "\n accepted_all:" << (double) acc/n_conf <<endl;
+    configurations_add = configurations_add.head_rows(acc);
+    configurations_add.save(X_add, arma_ascii);
+    labels_add = labels_add.head(acc);
+    labels_add.save(y_add, arma_ascii);
+    labels_add.print();
     return initial_hamiltonian;
+}
+
+
+mat saveConf(mat conf, mat ham, double U, int k) {
+    int n = ham.n_rows;
+    for(int i=0; i<n; i++) {
+        conf(k, i) = ham(i, i)/U;
+    }
+    return conf;
 }
 
 

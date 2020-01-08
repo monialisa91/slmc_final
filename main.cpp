@@ -30,19 +30,15 @@ int main() {
     Net modelCNN;
     modelCNN->to(device);
 
-
-
     // c) parameters of the neural network
 
     bool mode_pretrained = false;
 
     if(mode_pretrained) {
 
+
         const int64_t kTrainBatchSize = 256;
         const int64_t epochs = 300;
-
-
-        //2. DATA LOAD
 
         const string X_all = "new_data.txt"; // configurations - training
         const string y_all = "new_label.txt"; // energies of the configurations - training
@@ -50,45 +46,45 @@ int main() {
         const string X_test = "conf_test.txt"; // configurations - testing
         const string y_test = "energy_test.txt"; // energies of the configurations - testing
 
-        auto data_set = MyDataset(X_all, y_all, true, false).map(torch::data::transforms::Stack<>());
-        auto data_loader = torch::data::make_data_loader<torch::data::samplers::SequentialSampler>(
-                std::move(data_set), kTrainBatchSize);
-
-        cout << "training data loaded" << endl;
-
-        //3. TRAINING
-
-        torch::optim::Adam optimizer(modelCNN->parameters(), torch::optim::AdamOptions(1e-3));
-        modelCNN->train();
-
-        size_t batch_idx = 0;
-        float value_loss;
-        for (int i = 0; i < epochs; i++) {
-            cout << i << endl;
-            for (auto &batch : *data_loader) {
-                auto data = batch.data.to(device), targets = batch.target.to(device);
-                optimizer.zero_grad();
-                auto output = modelCNN->forward(data);
-                auto loss = torch::mse_loss(output.squeeze(), targets);
-                value_loss = loss.template item<float>();
-                AT_ASSERT(!std::isnan(loss.template item<float>()));
-                loss.backward();
-                optimizer.step();
-            }
-
-
-            printf("\rTrain Epoch: %d Loss: %.4f",
-                   i, value_loss);
-        }
-
-        torch::save(modelCNN, "modelCNN.pt");
+        trainNetwork(modelCNN, epochs, kTrainBatchSize, X_all, y_all, device_type, true);
     }
 
     else {
         torch::load(modelCNN, "modelCNN.pt");
     }
 
+    //4. Iterative SLMC
 
+    // a) setting the parameters of the model
+
+    srand(time(NULL));
+
+    double U = 4.0;
+    double cp = U/2.0;
+    double beta = 1.0/0.2;
+    double t = 1;
+    int L = 10;
+
+    mat configurations(10000, L*L);
+    configurations.load( "conf_test.txt");
+    mat new_ham;
+
+    mat init_ham = HamConf(configurations, U, t, L, 1000);
+
+    // b) setting the parameters of the additional training
+
+    const int64_t kTrainBatchSize_slmc = 10;
+    const int64_t epochs_slmc = 20;
+
+    const string X_add = "conf_add.txt"; // add_configurations - training
+    const string y_add = "energy_add.txt"; // add_energies of the configurations - training
+
+    for(int j=0; j<1; j++) {
+        new_ham = SLMC(init_ham, U, beta, cp, 100, 100, modelCNN, device_type, false, X_add, y_add);
+        cout << "additional configurations added " << endl;
+//        trainNetwork(modelCNN, 20, 8, X_add, y_add, device_type);
+
+    }
 
     return 0;
 }
